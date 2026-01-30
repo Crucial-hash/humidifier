@@ -1,153 +1,100 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Humidifier Timer</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 520px; margin: 24px auto; padding: 0 16px; }
-    button { padding: 10px 14px; font-size: 16px; }
-    .row { margin: 16px 0; }
-    input[type="range"] { width: 100%; }
-    .val { font-variant-numeric: tabular-nums; }
-    .small { opacity: .75; font-size: 13px; }
-    .card { border: 1px solid #ccc; border-radius: 12px; padding: 14px; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Humidifier Timer</title>
+<style>
+body{font-family:system-ui;margin:24px}
+button,input{font-size:16px}
+.card{border:1px solid #ccc;border-radius:12px;padding:16px;max-width:420px}
+.row{margin:12px 0}
+</style>
 </head>
 <body>
-  <h2>Humidifier Timer (BLE)</h2>
 
-  <div class="card">
-    <div class="row">
-      <button id="btnConnect">Connect</button>
-      <span id="status" class="val">Not connected</span>
-    </div>
-
-    <div class="row">
-      <label>
-        Enabled:
-        <input id="enabled" type="checkbox" />
-      </label>
-    </div>
-
-    <div class="row">
-      <label>OFF interval (ms): <span id="offLabel" class="val"></span></label>
-      <input id="offMs" type="range" min="50" max="60000" step="50" />
-      <div class="small">Time between sprays</div>
-    </div>
-
-    <div class="row">
-      <label>ON duration (ms): <span id="onLabel" class="val"></span></label>
-      <input id="onMs" type="range" min="50" max="60000" step="50" />
-      <div class="small">How long it sprays</div>
-    </div>
-
-    <div class="row">
-      <button id="btnApply">Apply</button>
-      <span id="applyStatus" class="val"></span>
-    </div>
-
-    <div class="small">
-      Works on Android Chrome / desktop Chrome/Edge. iOS Safari doesn’t support Web Bluetooth.
-    </div>
+<h2>Humidifier Timer</h2>
+<div class="card">
+  <div class="row">
+    <button id="connect">Connect</button>
+    <span id="status">Idle</span>
   </div>
 
+  <div class="row">
+    Enabled <input type="checkbox" id="en">
+  </div>
+
+  <div class="row">
+    OFF (ms): <span id="offv"></span><br>
+    <input type="range" id="off" min="500" max="60000" step="500">
+  </div>
+
+  <div class="row">
+    ON (ms): <span id="onv"></span><br>
+    <input type="range" id="on" min="200" max="60000" step="200">
+  </div>
+
+  <div class="row">
+    <button id="apply">Apply</button>
+    <span id="applyStatus"></span>
+  </div>
+</div>
+
 <script>
-  // Must match firmware
-  const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-  const ON_UUID      = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-  const OFF_UUID     = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
-  const EN_UUID      = "6e400004-b5a3-f393-e0a9-e50e24dcca9e";
+if (!navigator.bluetooth) {
+  document.getElementById("status").textContent =
+    "Web Bluetooth not available. Use Chrome over HTTPS.";
+}
 
-  let device, server, service, chOn, chOff, chEn;
+const SVC="6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const ON ="6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const OFF="6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+const EN ="6e400004-b5a3-f393-e0a9-e50e24dcca9e";
 
-  const $ = (id) => document.getElementById(id);
+let chOn,chOff,chEn;
 
-  function u32ToLEBytes(v) {
-    const b = new Uint8Array(4);
-    b[0] = v & 0xFF;
-    b[1] = (v >> 8) & 0xFF;
-    b[2] = (v >> 16) & 0xFF;
-    b[3] = (v >> 24) & 0xFF;
-    return b;
-  }
-  function leBytesToU32(buf) {
-    const b = new Uint8Array(buf);
-    return (b[0]) | (b[1] << 8) | (b[2] << 16) | (b[3] << 24);
-  }
+const $=id=>document.getElementById(id);
+const u32=v=>new Uint8Array([v&255,v>>8&255,v>>16&255,v>>24&255]);
+const r32=b=>b[0]|(b[1]<<8)|(b[2]<<16)|(b[3]<<24);
 
-  function setStatus(t) { $("status").textContent = t; }
-  function setApplyStatus(t) { $("applyStatus").textContent = t; }
+function upd(){
+  $("offv").textContent=$("off").value;
+  $("onv").textContent=$("on").value;
+}
+$("off").oninput=upd;
+$("on").oninput=upd;
 
-  function updateLabels() {
-    $("offLabel").textContent = `${$("offMs").value} ms (${(+$("offMs").value/1000).toFixed(2)} s)`;
-    $("onLabel").textContent  = `${$("onMs").value} ms (${(+$("onMs").value/1000).toFixed(2)} s)`;
-  }
+$("connect").onclick=async()=>{
+  try{
+    $("status").textContent="Connecting…";
+    const dev=await navigator.bluetooth.requestDevice({filters:[{services:[SVC]}]});
+    const srv=await (await dev.gatt.connect()).getPrimaryService(SVC);
+    chOn =await srv.getCharacteristic(ON);
+    chOff=await srv.getCharacteristic(OFF);
+    chEn =await srv.getCharacteristic(EN);
 
-  $("offMs").addEventListener("input", updateLabels);
-  $("onMs").addEventListener("input", updateLabels);
+    $("on").value = r32(new Uint8Array(await (await chOn.readValue()).buffer));
+    $("off").value= r32(new Uint8Array(await (await chOff.readValue()).buffer));
+    $("en").checked=(await chEn.readValue()).getUint8(0);
+    upd();
 
-  $("btnConnect").addEventListener("click", async () => {
-    try {
-      setStatus("Requesting device...");
-      device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [SERVICE_UUID] }]
-      });
+    $("status").textContent="Connected";
+  }catch(e){$("status").textContent=e.message;}
+};
 
-      device.addEventListener("gattserverdisconnected", () => {
-        setStatus("Disconnected");
-      });
+$("apply").onclick=async()=>{
+  try{
+    $("applyStatus").textContent="Applying…";
+    await chOn.writeValueWithoutResponse(u32(+$("on").value));
+    await chOff.writeValueWithoutResponse(u32(+$("off").value));
+    await chEn.writeValueWithoutResponse(new Uint8Array([$("en").checked?1:0]));
 
-      setStatus("Connecting...");
-      server = await device.gatt.connect();
-
-      service = await server.getPrimaryService(SERVICE_UUID);
-      chOn  = await service.getCharacteristic(ON_UUID);
-      chOff = await service.getCharacteristic(OFF_UUID);
-      chEn  = await service.getCharacteristic(EN_UUID);
-
-      // Read current values
-      const onVal  = leBytesToU32(await (await chOn.readValue()).buffer);
-      const offVal = leBytesToU32(await (await chOff.readValue()).buffer);
-      const enVal  = (await chEn.readValue()).getUint8(0);
-
-      $("onMs").value  = onVal;
-      $("offMs").value = offVal;
-      $("enabled").checked = (enVal !== 0);
-      updateLabels();
-
-      setStatus(`Connected: ${device.name || "device"}`);
-      setApplyStatus("");
-    } catch (e) {
-      console.error(e);
-      setStatus(`Error: ${e.message}`);
-    }
-  });
-
-  $("btnApply").addEventListener("click", async () => {
-    if (!chOn || !chOff || !chEn) {
-      setApplyStatus("Not connected");
-      return;
-    }
-    try {
-      setApplyStatus("Writing...");
-      const onMs  = parseInt($("onMs").value, 10);
-      const offMs = parseInt($("offMs").value, 10);
-      const en    = $("enabled").checked ? 1 : 0;
-
-      await chOn.writeValue(u32ToLEBytes(onMs));
-      await chOff.writeValue(u32ToLEBytes(offMs));
-      await chEn.writeValue(new Uint8Array([en]));
-
-      setApplyStatus("Applied");
-      setTimeout(() => setApplyStatus(""), 1200);
-    } catch (e) {
-      console.error(e);
-      setApplyStatus(`Write error: ${e.message}`);
-    }
-  });
-
-  updateLabels();
+    const on=r32(new Uint8Array(await (await chOn.readValue()).buffer));
+    const off=r32(new Uint8Array(await (await chOff.readValue()).buffer));
+    $("applyStatus").textContent=`Applied (ON ${on} / OFF ${off})`;
+  }catch(e){$("applyStatus").textContent=e.message;}
+};
+upd();
 </script>
 </body>
 </html>
